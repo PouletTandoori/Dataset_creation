@@ -429,8 +429,10 @@ data = data / np.max(data, axis=0)
 
 data = torch.tensor(data, dtype=torch.float32)
 transform_resize = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.ToTensor()])
+                transforms.ToPILImage(),
+                transforms.ToTensor(),
+                transforms.Resize((224, 224))
+            ])
 data = transform_resize(data)
 
 print('After transforms:')
@@ -470,18 +472,19 @@ plt.tight_layout()
 plt.show()
 plt.close()
 
-# set parameters for deepwave simulation:
-nx = vs_model.shape[1]  # Number of grid points in x direction (328 without absorbing boundaries)
-nz = vs_model.shape[0]  # Number of grid points in z direction (100 without absorbing boundaries)
-dt_deepwave = dt  # Time step for deepwave simulation
-nt = int(1.5/dt_deepwave)       # Number of time steps
-f0 = peak_freq                  # Source peak frequency
+# Modelling parameters for DeepWave according to ViscoElasticModel and MyAcquisition2 classes:
+nx = vs_model.shape[1]          # Number of grid points in x direction (328 without absorbing boundaries)
+nz = vs_model.shape[0]          # Number of grid points in z direction (100 without absorbing boundaries)
+dt_deepwave = dt                # Time step for deepwave simulation (s)
+nt = int(1.5/dt_deepwave)       # Number of time steps (assuming 1.5s total time)
+f0 = peak_freq                  # Source peak frequency (Hz)
 dh_deepwave = dh                # Grid spacing in meters
 pml_width = [0, nab, nab, nab]  # Absorbing frontiers (top,bottom,left,right)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print('Using device:', device)
-# Create velocity models as torch tensors and move to device
 
+# define device for deepwave:
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Create velocity models as torch tensors and move to device
 vp_model = np.ascontiguousarray(props2d["vp"][0:-nab, nab:-nab])
 vs_model = np.ascontiguousarray(props2d["vs"][0:-nab, nab:-nab])
 rho_model = np.ascontiguousarray(props2d["rho"][0:-nab, nab:-nab])
@@ -492,19 +495,18 @@ rho_tensor = torch.tensor(rho_model, dtype=torch.float32, device=device)
 
 #acquisition parameters according to MyAcquisition2 class:
 #SOURCE
-n_shots = 1              #nombre de tir
-n_sources_per_shot = 1  #nombre de source par tir
-d_source = 1            #distance entre les sources
-src_pos, rec_pos = aquire.set_rec_src()
-first_source = src_pos[0]/dh_deepwave - nab #position de la premiere source en cellules
-print('first_source:',first_source)
-source_depth = 0        #profondeur des sources
+n_shots = 1                                 # number of shots
+n_sources_per_shot = 1                      # number of sources per shot
+d_source =1 / dh_deepwave                   # distance between sources (grid cell)
+src_pos, rec_pos = aquire.set_rec_src()     # get source and receiver positions from SeismicGenerator acquisition class
+first_source = src_pos[0]/dh_deepwave - nab # First source location (grid cell)
+source_depth = 0 / dh_deepwave              # sources depth (grid cell)
 
 #RECEVERS:
-n_receivers_per_shot = 96
-d_receiver = 1 / dh_deepwave  # spacing between receivers in grid cells (1m / 0.5m = 2 cells)
-first_receiver = first_source + d_receiver
-receiver_depth = 0
+n_receivers_per_shot = 96                   # number of receivers per shot
+d_receiver = 1 / dh_deepwave                # spacing between receivers in grid cells (1m / 0.5m = 2 cells)
+first_receiver = first_source + d_receiver  # position of the first receiver (grid cell)
+receiver_depth = 0 / dh_deepwave            # depth of receivers (grid cell)
 
 
 source_locations = torch.zeros(n_shots, n_sources_per_shot, 2, dtype=torch.long)
@@ -543,6 +545,7 @@ plt.show()
 plt.close()
 
 # Simulate wave propagation using DeepWave
+print('shape of vp_tensor:',vp_tensor.shape)
 observed_data = deepwave.elastic(*deepwave.common.vpvsrho_to_lambmubuoyancy(vp_tensor, vs_tensor,
                                                rho_tensor),
         grid_spacing=dh_deepwave,
@@ -580,6 +583,9 @@ def plot_shot_gather(data_resized=data_resized,true_image=data,debug=True):
     time_vector = np.linspace(0, 1.5, data_resized.shape[2])
     nb_traces = 96
 
+    # data_resized requires grad, so we need to detach it from the computation graph:
+    data_resized = data_resized.detach().cpu()
+
     fig, axs = plt.subplots(1, 2, figsize=(14, 6))
     im0 = axs[0].imshow(data_resized[0].T, aspect='auto', cmap='gray',
                     extent=[0, nb_traces, time_vector[-1], time_vector[0]])
@@ -607,4 +613,205 @@ def plot_shot_gather(data_resized=data_resized,true_image=data,debug=True):
 
 plot_shot_gather(data_resized=data_resized,true_image=data,debug=True)
 
+'''# Modelling parameters for DeepWave according to ViscoElasticModel and MyAcquisition2 classes:
+nx = vs_model.shape[1]          # Number of grid points in x direction (328 without absorbing boundaries)
+nz = vs_model.shape[0]          # Number of grid points in z direction (100 without absorbing boundaries)
+dt_deepwave = dt                # Time step for deepwave simulation (s)
+nt = int(1.5/dt_deepwave)       # Number of time steps (assuming 1.5s total time)
+f0 = peak_freq                  # Source peak frequency (Hz)
+dh_deepwave = dh                # Grid spacing in meters
+pml_width = [0, nab, nab, nab]  # Absorbing frontiers (top,bottom,left,right)
+
+#acquisition parameters according to MyAcquisition2 class:
+#SOURCE
+n_shots = 1                                 # number of shots
+n_sources_per_shot = 1                      # number of sources per shot
+d_source =1 / dh_deepwave                   # distance between sources (grid cell)
+src_pos, rec_pos = aquire.set_rec_src()     # get source and receiver positions from SeismicGenerator acquisition class
+first_source = src_pos[0]/dh_deepwave - nab # First source location (grid cell)
+source_depth = 0 / dh_deepwave              # sources depth (grid cell)
+
+#RECEVERS:
+n_receivers_per_shot = 96                   # number of receivers per shot
+d_receiver = 1 / dh_deepwave                # spacing between receivers in grid cells (1m / 0.5m = 2 cells)
+first_receiver = first_source + d_receiver  # position of the first receiver (grid cell)
+receiver_depth = 0 / dh_deepwave            # depth of receivers (grid cell)
+'''
+
+print('######################################################################')
+print(' All the parameters values:\n')
+print('Modelling parameters for DeepWave:')
+print('NX:', nx)
+print('NZ:', nz)
+print('dt_deepwave:', dt_deepwave)
+print('nt:', nt)
+print('f0:', f0)
+print('dh_deepwave:', dh_deepwave)
+print('pml_width:', pml_width)
+print('\nAcquisition parameters:')
+print('n_shots:', n_shots)
+print('n_sources_per_shot:', n_sources_per_shot)
+print('d_source:', d_source)
+print('first_source:', first_source)
+print('source_depth:', source_depth)
+print('n_receivers_per_shot:', n_receivers_per_shot)
+print('d_receiver:', d_receiver)
+print('first_receiver:', first_receiver)
+print('receiver_depth:', receiver_depth)
+print('######################################################################')
+
+# test DeepwaveSeismicModel class:
+class DeepwaveSeismicModel(torch.nn.Module):
+    """
+    Modélisation sismique 1D -> 2D avec Deepwave et calcul différentiable de la MSE normalisée
+    """
+    def __init__(self, device=None,resample=1):
+        super().__init__()
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        #values are coming from tests_deepwave.py in Pycharm_ViT project
+        # Modelling parameters for DeepWave:
+        self.nx = 328
+        self.nz = 100
+        self.dt = 0.00004 * resample
+        self.nt = int(1.5/self.dt)
+        self.peak_freq = 15
+        self.dh = 0.5
+        nab = 128
+        self.pml_width = [0,nab,nab,nab]
+
+        # Acquisition parameters
+        self.n_shots = 1
+        self.n_sources_per_shot = 1
+        self.d_source = 2
+        self.first_source = 2
+        self.source_depth = 0
+
+        self.n_receivers_per_shot = 96
+        self.d_receiver = 2
+        self.first_receiver = 69
+        self.receiver_depth = 0
+
+        # define source locations
+        self.source_locations = torch.zeros(self.n_shots, self.n_sources_per_shot, 2, dtype=torch.long)
+        self.source_locations[..., 0] = self.source_depth
+        self.source_locations[:, 0, 1] = (torch.arange(self.n_shots) * self.d_source + self.first_source)
+
+        # define receivers locations
+        self.receiver_locations = torch.zeros(self.n_shots, self.n_receivers_per_shot, 2,
+                                         dtype=torch.long, device=device)
+        self.receiver_locations[..., 0] = self.receiver_depth
+        self.receiver_locations[:, :, 1] = (
+            (torch.arange(self.n_receivers_per_shot) * self.d_receiver + self.first_receiver)
+            .repeat(self.n_shots, 1)
+        )
+
+        # Ricker wavelet as source time function:
+        self.source_amplitudes = ((deepwave.wavelets.ricker(self.peak_freq, self.nt, self.dt, 1.5 / self.peak_freq)).repeat(self.n_shots, self.n_sources_per_shot, 1).to(self.device))
+        #self.source_amplitudes = self.source_amplitudes.unsqueeze(0).unsqueeze(0).to(self.device)  # (nshots,nsrc,nt)
+
+    def forward(self,vp_1d, vs_1d, shot_true):
+        """
+        Simule le tir avec Deepwave et calcule la MSE normalisée
+        """
+
+        vp = vp_1d.unsqueeze(1).to(self.device)
+        vs = vs_1d.unsqueeze(1).to(self.device)
+        rho = 0.31 * vp ** 0.25  # density using Gardner relation (approx.)
+
+        # Estimate 2D Vp,Vs and Rho from 1D inputs by repeating along x-axis:
+        vp = vp.repeat(1, self.nx)  # (Nz, Nx)
+        vs = vs.repeat(1, self.nx)
+        rho = rho.repeat(1, self.nx)
+        print('[DeepwaveSeismicModel] shape vp:', vp.shape)
+        print('[DeepwaveSeismicModel] shape vs:', vs.shape)
+        print('[DeepwaveSeismicModel] shape rho:', rho.shape)
+
+        shot_true = shot_true.to(self.device)
+
+        # vérifier si grad est activé pour vp et vs:
+        print('[DeepwaveSeismicModel] Vp requires grad:',vp.requires_grad)
+        print('[DeepwaveSeismicModel] Vs requires grad:',vs.requires_grad)
+
+        # Simulate wave propagation using DeepWave
+        observed_data = deepwave.elastic(*deepwave.common.vpvsrho_to_lambmubuoyancy(vp, vs, rho),
+                                         grid_spacing=self.dh,
+                                         dt=self.dt,
+                                         source_amplitudes_y=self.source_amplitudes,
+                                         source_locations_y=self.source_locations,
+                                         receiver_locations_y=self.receiver_locations,
+                                         pml_width=self.pml_width,
+                                         pml_freq=self.peak_freq,
+                                         )[-2]
+
+        print('[DeepwaveSeismicModel] shape observed_data:', observed_data.shape)
+        print('[DeepwaveSeismicModel] type observed_data:', observed_data.dtype)
+
+        #apply post processing:
+        eps = 1e-8  # avoid division by zero
+        # trace RMS normalization (per trace)
+        trace_rms = torch.sqrt(torch.sum(observed_data ** 2, dim=2, keepdim=True))
+        observed_data = observed_data / (trace_rms + eps)
+
+        # panel max normalization
+        # panel max normalization sur les deux dimensions (batch, traces, temps)
+        panel_scale = torch.sqrt(torch.mean(observed_data ** 2, dim=(1, 2), keepdim=True))
+        observed_data = observed_data / (panel_scale + eps)
+
+        # gain scaling
+        gain = 1000.0
+        observed_data = observed_data * gain
+
+        # apply transform_resize to observed_data:
+        transform_resize = transforms.Compose([
+            transforms.Resize((224, 224))
+            ])
+        observed_data = transform_resize(observed_data.cpu()).to(self.device)
+
+        # min-max normalization
+        obs_min = torch.min(torch.min(observed_data, dim=1, keepdim=True)[0], dim=2, keepdim=True)[0]
+        obs_max = torch.max(torch.max(observed_data, dim=1, keepdim=True)[0], dim=2, keepdim=True)[0]
+        observed_data = (observed_data - obs_min) / (obs_max - obs_min + eps)
+
+        # Compute normalized MSE loss
+        observed_data = observed_data  # shape [1, 96, 37500]
+        shot_true = shot_true.permute(0, 2, 1)  # shape [1, 96, 37500]
+
+        loss_mse = torch.nn.functional.mse_loss(observed_data, shot_true)
+
+        return observed_data, loss_mse
+
+
+# let's create 1d vp and vs vectors from our 2d models by taking the first column:
+vp_1d = vp_tensor[:,0]
+vs_1d = vp_tensor[:,0]
+vp_1d = vp_1d.clone().detach().requires_grad_(True)
+vs_1d = vs_1d.clone().detach().requires_grad_(True)
+
+print('vp_1d shape:', vp_1d.shape, ' and vs_1d:', vs_1d.shape)
+
+# create DeepwaveSeismicModel instance:
+deepwave_model = DeepwaveSeismicModel( device=device,resample=10)
+
+# run forward modelling:
+simulated_shot, loss0 = deepwave_model(vp_1d, vs_1d, data)
+
+#plot the simulated shot gather:
+plot_shot_gather(data_resized=simulated_shot.to('cpu'),true_image=data,debug=True)
+
+#print loss:
+print('Normalized MSE loss between simulated and true shot gather:', loss0.item())
+
+# vérification backpropagation:
+torch.autograd.set_detect_anomaly(True)
+# test final:
+optimizer = torch.optim.Adam([vp_1d, vs_1d], lr=1e-3)
+print('Starting optimization loop:')
+for i in range(5):
+    optimizer.zero_grad()
+    _, loss = deepwave_model(vp_1d, vs_1d, data)
+    loss.backward()
+    print('Gradient norm Vp:', torch.norm(vp_1d.grad))
+    optimizer.step()
+    print(i, loss.item())
 
