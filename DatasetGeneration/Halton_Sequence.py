@@ -12,7 +12,7 @@ class HaltonSequenceGenerator:
         self.intervals = intervals
         self.n_dimensions = len(intervals)
         self.scramble = scramble
-        self.halton = Halton(d=self.n_dimensions, scramble=self.scramble)
+        self.halton = Halton(d=self.n_dimensions, scramble=self.scramble, seed=42)
         self.integer = integer
 
     def generate(self, n_samples):

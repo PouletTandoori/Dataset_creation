@@ -235,8 +235,8 @@ class SeismicAcquisition2:
         self.nab = 64
 
         self.dh = dh  # grid spacing, in meters
-        self.nx = nx + 2 * self.nab  # number of grid cells in x direction
-        self.nz = nz + 2 * self.nab  # number of grid cells in z direction
+        self.nx = nx
+        self.nz = nz
         self.ny = ny
 
         # Whether free surface is turned on the top face.
@@ -298,7 +298,8 @@ class SeismicAcquisition2:
         if self.gmin:
             gmin = self.gmin
         else:
-            gmin = self.nab + self.minoffset
+            free_space = (self.nx - self.nab * 2 - ng * self.dg) * self.dh
+            gmin = self.nab + self.minoffset +10 + free_space/2
 
         if self.gmax:
             gmax = self.gmax
@@ -308,6 +309,7 @@ class SeismicAcquisition2:
         # Add sources.
         if self.singleshot == True:
             sx = [gmin * self.dh - self.minoffset * self.dh]
+            print('Source position (m):', sx)
 
         else :
             #print('Configuration:', self.configuration)
@@ -315,7 +317,7 @@ class SeismicAcquisition2:
             start_idx = gmin * self.dh - self.minoffset * self.dh
             end_idx = gmax * self.dh + self.minoffset * self.dh
             sx = np.arange(start_idx, end_idx, self.ds)
-            print('Sources positions (m):', sx)
+            print('ICI Sources positions (m):', sx)
 
         sid = np.arange(0, len(sx))
         sz = np.full_like(sx, self.source_depth)
@@ -351,52 +353,153 @@ class SeismicAcquisition2:
         return random_wavelet_generator(self.NT, self.dt, self.peak_freq,
                                         self.df, self.tdelay)
 
-    def plot_acquisition_geometry(self, path=None):
+    def plot_acquisition_geometry(self, path=None, show=True,
+                                  n_receivers=None, rec_spacing=None,
+                                  src_x=None, src_z=None,
+                                  annotate=True, figsize=(10, 6)):
+        """
+        Plot acquisition geometry with exact positions for:
+          - receivers (triangles) on the surface,
+          - a single source (red star),
+          - absorbing boundaries (left, right, bottom) of thickness `nab` (in grid cells).
+
+        Defaults:
+          - receivers centered horizontally at surface (z = 0),
+          - source centered on receiver line, at depth src_z (default = self.dh).
+        Parameters override module-level defaults if provided.
+        Returns (fig, ax).
+        """
+
+        # --- recover basic geometry from object (fallbacks if attributes missing) ---
+        dh = getattr(self, "dh", 0.5)
+        NX = getattr(self, "NX", getattr(self, "nx", None))
+        NZ = getattr(self, "NZ", getattr(self, "nz", None))
+        if NX is None or NZ is None:
+            # try older attribute names
+            NX = getattr(self, "nx", None)
+            NZ = getattr(self, "nz", None)
+        if NX is None or NZ is None:
+            raise ValueError(
+                "Impossible de déterminer NX/NZ depuis l'objet. Vérifie les attributs 'NX'/'NZ' ou 'nx'/'nz'.")
+
+        full_width = NX * dh
+        full_depth = NZ * dh
+
+        # absorbing boundary thickness in cells -> meters
+        nab_cells = getattr(self, "nab", None)
+        if nab_cells is None:
+            # try global variable nab if present
+            try:
+                nab_cells = self.nab
+            except NameError:
+                nab_cells = 0
+        nab_m = nab_cells * dh
+
+        # receivers defaults
+        if n_receivers is None:
+            # prefer attribute if exists
+            n_receivers = getattr(self, "number_receivers", None) or getattr(self, "n_receivers", None) or 96
+        if rec_spacing is None:
+            rec_spacing = self.dg
+
+        # compute receiver line length and start position (centered horizontally)
+        rec_line_length = (n_receivers - 1) * rec_spacing
+
+        # source defaults: centered on receivers, slight depth by default
         src_pos, rec_pos = self.set_rec_src()
-        qty_srcs = src_pos.shape[1]
-        src_x, _, _, src_id, _ = src_pos
-        rec_x, _, _, rec_src_id, _, _, _, _ = rec_pos
 
-        x_max = self.nx * self.dh
-        z_max = self.nz * self.dh
+        if src_x is None:
+            src_x, _, _, src_id, _ = src_pos
+        if src_z is None:
+            _, _, src_z, src_id, _ = src_pos
 
-        # Configuration du graphique
-        fig, ax = plt.subplots(figsize=(12, 6))
+        rx_x, _, rx_z, _, _ ,_ , _,_ = rec_pos
 
-        # --- Tracé du modèle (fond) ---
-        model_rect = patches.Rectangle((0, 0), x_max, z_max, color='lightgray', alpha=0.3)
-        ax.add_patch(model_rect)
+        print('Source position (m): (', src_x, src_z,')')
+        print('Receiver positions (m): (', rx_x, rx_z,')')
 
-        # --- Tracé des sources ---
-        ax.scatter(src_x, [0] * len(src_x), marker='x', s=60, color='red', label='Sources')
+        # create figure
+        fig, ax = plt.subplots(figsize=figsize)
+        # draw domain rectangle
+        ax.add_patch(plt.Rectangle((0, 0), full_width, full_depth,
+                                   fill=False, linewidth=1.0, linestyle='-'))
+        # plot grid lines every e.g. 5 m (adapt if small)
+        grid_step = max(1.0, int(5 / dh) * dh)  # ~5 m sensible default
+        # vertical gridlines
+        xs = np.arange(0, full_width + 1e-9, grid_step)
+        for xg in xs:
+            ax.plot([xg, xg], [0, full_depth], linewidth=0.3, alpha=0.6)
+        # horizontal gridlines
+        zs = np.arange(0, full_depth + 1e-9, grid_step)
+        for zg in zs:
+            ax.plot([0, full_width], [zg, zg], linewidth=0.3, alpha=0.6)
 
-        # --- Tracé des récepteurs ---
-        ax.scatter(rec_x, [0.5] * len(rec_x), marker='v', s=40, color='blue', label='Receivers')
+        # plot absorbing boundaries (shaded rectangles, light grey)
+        if nab_m > 0:
+            # left
+            ax.add_patch(plt.Rectangle((0, 0), nab_m, full_depth,
+                                       color='lightgrey', alpha=0.5, zorder=0))
+            # right
+            ax.add_patch(plt.Rectangle((full_width - nab_m, 0), nab_m, full_depth,
+                                       color='lightgrey', alpha=0.5, zorder=0))
+            # bottom
+            ax.add_patch(plt.Rectangle((0, full_depth - nab_m), full_width, nab_m,
+                                       color='lightgrey', alpha=0.5, zorder=0))
 
-        # --- Réglage des axes ---
-        ax.set_xlim(src_x[0] - 10, rec_x[-1] + 10)  # Ajuster les limites des axes x
-        ax.set_ylim(-1, z_max/3)
-        ax.set_xlabel("Position horizontale (m)")
-        ax.set_ylabel("Profondeur (m)")
-        ax.invert_yaxis()  # Pour que 0 soit en haut (comme une coupe géologique)
-        ax.grid(True, linestyle="--", alpha=0.4)
+        # plot receivers
+        ax.scatter(rx_x, rx_z, marker='v', s=40, zorder=5)
+        for xi, zi in zip(rx_x, rx_z):
+            ax.plot([xi, xi], [zi, zi + dh * 0.6], linewidth=0.8, alpha=0.6)  # little stem
 
-        # --- Légende ---
-        ax.legend(loc='upper right', fontsize=12)
+        # plot source
+        ax.scatter([src_x], [src_z], marker='*', s=150, c='red', edgecolors='k', zorder=10)
 
-        # --- Titre ---
-        ax.set_title("Géométrie d'acquisition sismique", fontsize=14, fontweight='bold')
+        # annotations / labels
+        if annotate:
+            # annotate absorbing boundaries
+            if nab_m > 0:
+                ax.annotate(f"Absorb (left) = {nab_m:.1f} m", xy=(nab_m / 2, full_depth / 2), ha='center', va='center',
+                            rotation=90)
+                ax.annotate(f"Absorb (right) = {nab_m:.1f} m", xy=(full_width - nab_m / 2, full_depth / 2), ha='center',
+                            va='center', rotation=90)
+                ax.annotate(f"Absorb (bottom) = {nab_m:.1f} m", xy=(full_width / 2, full_depth - nab_m / 2),
+                            ha='center', va='center')
 
-        # --- Sauvegarde / affichage ---
+        # axes settings
+        ax.set_xlim(-dh, full_width + dh)
+        ax.set_ylim(full_depth + dh, -dh)  # invert y to have depth downwards visually (top=0)
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Depth (m)")
+        ax.set_title("Acquisition geometry (positions en mètres)")
+
+        # coordinates legend
+        text = (f"Total model size: {NX*dh} x {NZ*dh} m\n"
+                f"Nb Receivers: {n_receivers} | spacing {rec_spacing:.2f} m | line length {rec_line_length:.1f} m\n"
+                f"Source: (x={float(src_x):.2f} m, z={float(src_z):.2f} m\n)"
+                f"Absorbing border thickness: {nab_m:.2f} m")
+        ax.text(0.99, 0.01, text, transform=ax.transAxes, ha='right', va='bottom', fontsize=8,
+                bbox=dict(facecolor='white', alpha=0.7, boxstyle='round'))
+
         plt.tight_layout()
-        if path:
-            plt.savefig(f'{path}/acquisition_geometry.pdf', format='pdf', dpi=300, bbox_inches='tight')
-            #afficher le path actuel:
-            print('Current path:', os.getcwd())
-            print('Figure saved at:', path,'/acquisition_geometry.pdf')
 
-        #plt.show()
-        plt.close()
+        # save if requested
+        if path is not None:
+            os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
+            # if path is a directory, use default filename
+            if os.path.isdir(path):
+                savepath = os.path.join(path, "acquisition_geometry.png")
+            else:
+                savepath = path
+            fig.savefig(savepath, dpi=200)
+            print(f"[plot] figure saved to: {savepath}")
+
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
+
+        return fig, ax
 
 
 class SeismicGenerator(Physic):
@@ -521,9 +624,11 @@ def plot_shotgather(liste_inputspre, liste_labelspre,dz=1,dt=0.00001,resample=10
 
         # Normalisation
         #trace par trace
-        #shotgather = np.array(shotgather)
-        # = shotgather - np.min(shotgather, axis=0)
-        #shotgather = shotgather / np.max(shotgather, axis=0)
+        shotgather = np.array(shotgather)
+        shotgather= shotgather - np.min(shotgather, axis=0)
+        shotgather = shotgather / np.max(shotgather, axis=0)
+
+        print('values in the shotgather:', shotgather)
 
         #globale sur tout le tir
         #shotgather = shotgather - np.min(shotgather)
@@ -532,7 +637,7 @@ def plot_shotgather(liste_inputspre, liste_labelspre,dz=1,dt=0.00001,resample=10
         # Plot only the second half of the traces
         axs[i][0].imshow(shotgather,
                          extent=[1, nb_traces, time_vector[-1], time_vector[0]],
-                         aspect='auto', cmap='gray',vmin=shotgather.min()*0.1,vmax=shotgather.max()*0.1)
+                         aspect='auto', cmap='gray')
         axs[i][0].set_title(f'Shot Gather num {i + 1}')
         axs[i][0].set_ylabel('Time (s)', fontsize=15)
         axs[i][0].set_xlabel('Traces', fontsize=15)

@@ -1,8 +1,13 @@
 from ModelGenerator_modified import (Sequence, Stratigraphy,
                             Property, Lithology, ModelGenerator, Deformation)
 import os
+
+tmpdir = "/userdata/u/rbertille/tmp_remy"
+os.environ["TMPDIR"] = tmpdir
+os.environ["OMPI_MCA_orte_tmpdir_base"] = tmpdir
+
 # visible devices = 2
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 # ID of GPU:
 nproc = len(os.environ["CUDA_VISIBLE_DEVICES"].split(','))
 
@@ -18,12 +23,13 @@ import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import glob
 
 
 
 #define parser
 parser = argparse.ArgumentParser()
-parser.add_argument('-tr_s','--trainsize',type=int,default=5,
+parser.add_argument('-tr_s','--trainsize',type=int,default=2,
                     help='Number of files to be generated in the training folder,'
                          '\n validation and test folders will have 30% of this number')
 parser.add_argument('-data','--dataset_name',type=str,default='Halton_debug',
@@ -62,26 +68,28 @@ train_size= args.trainsize
 validate_size= int(train_size*0.3)
 test_size= int(train_size*0.3)
 
-#Define parameters for aquisition geometry:
-length_profile=96
-dh = 0.5                                            # Grid spacing in meters# Length of the line of receivers: 96m (=m*Zmax with 1<m<3)
-minimal_offset=length_profile*dh                    # Minimal offset: generally L/4
-bonus_cells = 100                                     # Number of bonus cells to avoid disposal to close to the boundary
-Profile=length_profile+minimal_offset+bonus_cells   # Length of the profile: 96+24=120m
-number_receivers=96                                 # Number of receivers: 96
-receiver_spacing=1                                  # Receiver spacing: 1m (Zmin/k with 0.3<k<1.0)
-Zmax=50                                             # Maximum depth of the profile: 50m
-
 #Define parameters for the modelisation of the seismic data:
 nab = 128                                           # Number of padding cells for the absorbing boundary
 peak_freq = 15                                      # Peak frequency of the wavelet in Hertz
 df = 2                                              # Frequency deviation for randomness
 
+#Define parameters for aquisition geometry:
+length_profile=96
+dh = 0.5                                            # Grid spacing in meters# Length of the line of receivers: 96m (=m*Zmax with 1<m<3)
+minimal_offset=length_profile*dh                    # Minimal offset: generally L/4
+bonus_cells = 200                                     # Number of bonus cells to avoid disposal to close to the boundary
+Profile=length_profile+minimal_offset+2*nab*dh + 20   # Length of the profile: 96+ 48 + 128 + 20 = 196+96= 292 cells
+number_receivers=96                                 # Number of receivers: 96
+receiver_spacing=1                                  # Receiver spacing: 1m (Zmin/k with 0.3<k<1.0)
+Zmax=50                                             # Maximum depth of the profile: 50m
+
+
+
 
 dt = 0.00004                                       # Time sampling interval in seconds
 resampling = 35                                     # Resampling factor for the time axis
-NbCellsX= int(Profile/dh)                           # Number of grid cells in x direction (domain size + boundary)
-NbCellsZ= int(Zmax/dh)                              # Number of grid cells in z direction (domain size + boundary)
+NbCellsX= int(Profile/dh)                           # Number of grid cells in x direction (domain size + boundary) = 292 /0.5 = 584
+NbCellsZ= int(Zmax/dh) + nab                              # Number of grid cells in z direction (domain size + boundary) = 50/0.5 + 128 = 228
 
 
 
@@ -103,7 +111,7 @@ class ViscoElasticModel(ModelGenerator):
         # Minimum number of layers.
         self.layer_num_min = 10
         # Maximum number of layers
-        self.num_layers_max = 17
+        self.num_layers_max = 20
         # Fix the number of layers if not 0.
         self.num_layers = 0
 
@@ -318,7 +326,7 @@ class ViscoElasticModel(ModelGenerator):
                                     lithologies=[dry_sands, wet_soils, silts, clay,
                                                   tills, sandstone, dolomite, limestone, shale, organic_soils],
                                     thick_min=self.NZ,
-                                    thick_max=self.NZ,
+                                    thick_max=int(Zmax/dh),
                                     deform=deform,
                                     skip_prob=0.0,
                                     ordered=False,
@@ -347,7 +355,7 @@ class ViscoElasticModel(ModelGenerator):
 
 
 #Display the summary of the lithologies:
-#model=ViscoElasticModel()
+model=ViscoElasticModel()
 #model.Summary_lithologies(model.stratigraphy, model.properties)
 
 #define MyAcquisition class using SeismicAcquisition class from SeismicGenerator.py
@@ -381,7 +389,8 @@ class MyAcquisition2(SeismicAcquisition2):
 
 
 #plot the aquisition geometry:
-#aquire=MyAcquisition2()
+aquire=MyAcquisition2()
+aquire.plot_acquisition_geometry(path=path_figures)
 
 
 class SimpleDataset(GeoDataset):
@@ -389,9 +398,8 @@ class SimpleDataset(GeoDataset):
 
     def set_dataset(self, *args, **kwargs):
         model=ViscoElasticModel()
-        model.layer_num_max = 17
+        model.layer_num_max = 19
         acquire = MyAcquisition2()
-        print('Acquisition.NT :',acquire.NT)
 
         physic = SeismicGenerator(acquire=acquire)
         graphios = {ShotGather.name: ShotGather(model=model, acquire=acquire),
@@ -413,12 +421,11 @@ dataset = SimpleDataset(trainsize=train_size, validatesize=validate_size, testsi
 
 #create ModelAnimated:
 print('Creating model visualisation:')
-dataset.model.animated_dataset(nframes=min(train_size+validate_size+test_size,50),path=path_figures)
+#dataset.model.animated_dataset(nframes=min(train_size+validate_size+test_size,50),path=path_figures)
 #generate dataset:
 print('\n')
 print('---------------------------------------------------')
 print('Generating dataset:')
-#nproc = id selected GPUs
 dataset.generate_dataset(nproc=nproc)
 print('Dataset created')
 print('---------------------------------------------------')
@@ -431,23 +438,21 @@ os.system(f'rm Datasets/{args.dataset_name}/validate/*.lock')
 os.system(f'rm Datasets/{args.dataset_name}/test/*.lock')
 
 
+#change direction to /home/rbertille/data/pycharm/ViT_project/pycharm_ViT to make post processing
+print('Post processing:')
+os.chdir('/home/rbertille/data/pycharm/ViT_project/pycharm_ViT')
+subprocess.run(['python', 'verify_data.py', '--dataset_name', args.dataset_name, '--clean', 'True'])
+
+os.chdir('/home/rbertille/data/pycharm/ViT_project/pycharm_ViT/DatasetGeneration')
 
 #smallest between 5 and the sum of the sizes of the training, validation, and test sets
-nb_examples = min(5, args.trainsize + validate_size + test_size)
+true_files_number = len(glob.glob(f'Datasets/{args.dataset_name}/train/*'))
+nb_examples = min(5, args.trainsize + validate_size + test_size,true_files_number)
 # Collect multiple examples from the dataset
 examples = [dataset.get_example(phase="train") for _ in range(nb_examples)]
 # Unpack the examples into separate lists for inputs, labels, weights, and filenames
 inputspre_list, labelspre_list, weightspre_list, filename_list = zip(*examples)
 
 
-
-#change direction to /home/rbertille/data/pycharm/ViT_project/pycharm_ViT to make post processing
-print('Post processing:')
-os.chdir('/home/rbertille/data/pycharm/ViT_project/pycharm_ViT')
-subprocess.run(['python', 'verify_data.py', '--dataset_name', args.dataset_name, '--clean', 'True'])
-subprocess.run(['python','DistributionDataset.py','--dataset_name',args.dataset_name])
-
-os.chdir('/home/rbertille/data/pycharm/ViT_project/pycharm_ViT/DatasetGeneration')
-#aquire.plot_acquisition_geometry(path=path_figures)
 #plot the example:
 plot_shotgather(inputspre_list, labelspre_list,dz=dh,dt=dt,resample=resampling,path=path_figures, nb_examples=nb_examples)

@@ -139,7 +139,7 @@ class GeoDataset:
         samples=self.generator.generate_dataset(self.datatrain, self.trainsize,
                                         seed0=seed0, nproc=nproc)
 
-        # voir la forme du dictionnaire dictionnaire
+        # voir la forme du dictionnaire
         print('Halton seq at the end of training dataset generation:')
         print(f'Nb_layers: {samples["Nb_layers"].shape}\n,'
               f' thickness: {samples["thickness"].shape}\n,'

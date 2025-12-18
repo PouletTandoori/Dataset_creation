@@ -448,7 +448,12 @@ class ShotGather(GraphIO):
     def plot(self, data, weights=None, axs=None, cmap='Greys', vmin=None,
              vmax=None, clip=0.05, ims=None):
         if axs is None:
-            axs = [None]
+            if self.is_1d:
+                fig, axs = plt.subplots(1, 1)
+                axs = [axs]
+            else:
+                fig, axs = plt.subplots(1, 2)
+                axs = list(axs)
         if ims is None:
             ims = [None]
         if self.is_1d:
@@ -560,18 +565,20 @@ class ShotGather(GraphIO):
 
         return data, weights
 
-    def generate(self, data, props):
+    def generate(self, data, props=None):
         # normaliser data colonne par colonne indivisuellement:
         data = np.array(data)  # Convertir en tableau numpy pour faciliter la manipulation
         data = data - np.min(data, axis=0)  # Normalisation par colonne (soustraction du min)
         data = data / np.max(data, axis=0)  # Normalisation par colonne (division par le max)
+        print('shape input shotgather:',data.shape)
 
         n_cols = data.shape[1]
-        keep = np.tile(np.concatenate([np.zeros(96, dtype=bool), np.ones(96, dtype=bool)]), n_cols // 192 + 1)
-        keep = keep[:n_cols]
+        #keep = np.tile(np.concatenate([np.zeros(96, dtype=bool), np.ones(96, dtype=bool)]), n_cols // 192 + 1)
+        #keep = keep[:n_cols]
+
+        data = data[:, -(n_cols//2):]
 
         # Application du masque
-        data = data[:, keep]
         print('shape shotgather:',data.shape)
 
         #plot quickly from column 96 * 5 to 96 * 5 + 96:

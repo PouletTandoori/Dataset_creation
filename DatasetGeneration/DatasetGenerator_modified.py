@@ -18,6 +18,8 @@ from GeoFlow.Physics.Physic import Physic, PhysicError
 from GraphIO_modified import GraphIO
 from tqdm import tqdm
 from time import time
+from math import floor
+from Utilities import progress_telegram, crash_telegram
 
 
 class DatasetGenerator:
@@ -63,12 +65,17 @@ class DatasetGenerator:
         features = {}
         weights = {}
         for name in self.graphios:
-            #print('name of graphios:', name)
             label, weight = self.graphios[name].generate(data=data, props=props)
+            if name == 'vsdepth' or name ==  'vpdepth':
+                print(f'{name} label.shape: {label.shape}')
+                #just keep the 100 first lines (50 m * 0.5 dh)
+                label = label[:100,:]
+                weight = np.reshape(weight, (weight.shape[0],))
             features[name] = label
             weights[name] = weight
 
-        return features, weights,self.Halt_seq, self.model
+
+        return features, weights,self.Halt_seq, self.model, results
 
     def read(self, filename: str, toread: list = None):
         """
@@ -128,7 +135,7 @@ class DatasetGenerator:
                     preds[key] = file[key + "_pred"][:]
         return preds
 
-    def write(self, exampleid, savedir, features, weights,model, filename=None):
+    def write(self, exampleid, savedir, features, weights,model,results, filename=None):
         """
         Write one example in hdf5 format.
 
@@ -138,8 +145,6 @@ class DatasetGenerator:
         :param weights:  A dictionary of graph weights' name-values pairs.
         :param filename: If provided, save the example in filename.
         """
-        if model is None:
-            print('model is None')
         if filename is None:
             filename = os.path.join(savedir, "example_%d" % exampleid)
         else:
@@ -147,7 +152,6 @@ class DatasetGenerator:
 
 
         with h5.File(filename, "w") as file:
-            print('filename:', filename)
             # return lithologies:
             lithologies = [la.lithology.name for la in model._stratigraphy.layers]
             file['lithologies'] = lithologies
@@ -261,6 +265,7 @@ class DatasetProcess(Process):
 
         # Utiliser une barre de progression
         with tqdm(total=total_seeds, desc="Generating dataset",colour='green') as pbar:
+            examples_created = 0
 
             while not self.seeds.empty():
                 try:
@@ -280,10 +285,22 @@ class DatasetProcess(Process):
                     try:
                         with FileLock(filepath + '.lock', timeout=0):
                             print('filename:', filename)
-                            feats, weights,self.Halton_queue,model = self.data_generator.new_example(seed, self.Halton_queue)
+                            feats, weights,self.Halton_queue,model,results = self.data_generator.new_example(seed, self.Halton_queue)
                             self.data_generator.write(seed, self.savepath, feats,
-                                                      weights,model, filename=filename)
-                        #print('lithologies:', [la.lithology.name for la in model._stratigraphy.layers])
+                                                      weights,model, results, filename=filename)
+
+                        examples_created += 1
+
+                        # Notification Telegram pour la progression tous les 10%
+                        perc = floor(examples_created / total_seeds * 100)
+
+                        if perc % 10 == 0:
+                            try:
+                                progress_telegram(perc, examples_created, total_seeds)
+                            except Exception as e:
+                                print(f"[NOTIF] Erreur en envoyant Telegram: {e}")
+
+
 
                     except Timeout:
                         print(f"WARNING: {filepath} is locked")
@@ -291,6 +308,12 @@ class DatasetProcess(Process):
                     except (ValueError, PhysicError) as error:
                         print(f"WARNING: {error}")
                         os.remove(filepath + '.lock')
+                    except Exception as error:
+                        # Notification Telegram pour crash
+                        try:
+                            crash_telegram(error, examples_created)
+                        except Exception as e:
+                            print(f"[NOTIF] Erreur en envoyant Telegram: {e}")
 
                 # Mettre à jour la barre de progression après traitement
                 pbar.update(1)

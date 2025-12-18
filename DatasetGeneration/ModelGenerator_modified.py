@@ -164,7 +164,7 @@ class ModelGenerator:
             print('[ModelGenerator] Halton seq is None, nlayer_max=',self.layer_num_max)
             # generate Halton sequence:
             intervals = [(0, 1)] * 7  # 6 dimensions between 0 and 1
-            Halton_sequence = HaltonSequenceGenerator(intervals, integer=False)
+            Halton_sequence = HaltonSequenceGenerator(intervals, integer=False, scramble=False)
             # Generate 15 times more rows than the number of examples:
             n_samples = self.layer_num_max * (1000)
             # print('Generating Halton sequence: ',n_samples,' samples')
@@ -966,7 +966,7 @@ def random_thicks(nz, thickmin, thickmax, nmin,nmax, nlayer,
 
     #epaisseurs = epaisseurs / (np.sum(epaisseurs)) * epaisseur_totale
     #on normalise les épaisseurs:
-    thicks = thicks / Prof_atteinte * nz
+    thicks = thicks / Prof_atteinte * (50*2)
 
     return thicks, nlayer
 
